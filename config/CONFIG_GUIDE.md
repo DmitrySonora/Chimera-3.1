@@ -75,6 +75,8 @@
 - `EVENT_STORE_MIGRATION_BATCH` - размер батча при миграции событий (по умолчанию: 1000)
 - `EVENT_STORE_MIGRATION_DELAY` - задержка между батчами для снижения нагрузки в секундах (по умолчанию: 0.1)
 - `EVENT_STORE_MIGRATION_VERIFY` - выполнять ли верификацию после миграции (по умолчанию: True)
+### Advisory lock настройки
+- `USE_DOUBLE_KEY_ADVISORY_LOCK` - использовать два int4 ключа вместо одного для advisory locks, что значительно снижает вероятность коллизий хэшей (по умолчанию: True)
 
 ### Переключение реализации
 - `EVENT_STORE_TYPE` - тип используемого Event Store: "memory" или "postgres" (по умолчанию: "memory")

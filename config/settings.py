@@ -97,6 +97,9 @@ EVENT_STORE_MIGRATION_VERIFY = True # Верифицировать данные 
 # Переключение реализации
 EVENT_STORE_TYPE = "postgres"         # "memory" или "postgres" (пока оставляем memory)
 
+# Advisory lock настройки
+USE_DOUBLE_KEY_ADVISORY_LOCK = True  # Использовать два ключа для уменьшения коллизий
+
 
 
 # ========================================
