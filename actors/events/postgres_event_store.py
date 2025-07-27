@@ -20,6 +20,29 @@ from config.settings import (
 from utils.monitoring import measure_latency
 
 
+def generate_stream_lock_keys(stream_id: str) -> tuple[int, int]:
+    """
+    Генерирует два int4 ключа для advisory lock из stream_id.
+    Использует полный MD5 хэш для минимизации коллизий.
+    
+    Args:
+        stream_id: Идентификатор потока
+        
+    Returns:
+        Кортеж (high_key, low_key) для pg_advisory_xact_lock
+    """
+    import hashlib
+    
+    # Генерируем MD5 хэш от stream_id
+    hash_hex = hashlib.md5(stream_id.encode()).hexdigest()
+    
+    # Разбиваем на две части по 8 символов (32 бита каждая)
+    # Используем знаковые int32 для PostgreSQL
+    high_key = int(hash_hex[:8], 16) - 2**31  # Преобразуем в знаковый int32
+    low_key = int(hash_hex[8:16], 16) - 2**31
+    
+    return high_key, low_key
+
 class PostgresEventStore:
     """
     PostgreSQL реализация Event Store с батчевой записью.
@@ -248,11 +271,15 @@ class PostgresEventStore:
                     self._version_conflicts += 1
                     self.logger.error(f"Version conflict for stream {stream_id}: {str(e)}")
                     # Возвращаем события обратно в буфер для повторной попытки
-                    self._write_buffer.extend(stream_events)
+                    # Используем appendleft чтобы сохранить порядок
+                    for event in reversed(stream_events):
+                        self._write_buffer.appendleft(event)
                 except Exception as e:
                     self.logger.error(f"Failed to write events for stream {stream_id}: {str(e)}")
                     # Возвращаем события обратно в буфер
-                    self._write_buffer.extend(stream_events)
+                    # Используем appendleft чтобы сохранить порядок
+                    for event in reversed(stream_events):
+                        self._write_buffer.appendleft(event)
             
             if written_count > 0:
                 self._batch_writes += 1
@@ -280,10 +307,13 @@ class PostgresEventStore:
                     last_version = row['version']
                 else:
                     # Если записей нет, проверяем что никто не вставляет параллельно
-                    # используя advisory lock на хэш stream_id
-                    import hashlib
-                    stream_hash = int(hashlib.md5(stream_id.encode()).hexdigest()[:8], 16)
-                    await conn.execute(f"SELECT pg_advisory_xact_lock({stream_hash})")
+                    # используя advisory lock с двумя ключами для минимизации коллизий
+                    high_key, low_key = generate_stream_lock_keys(stream_id)
+                    await conn.execute(
+                        "SELECT pg_advisory_xact_lock($1, $2)", 
+                        high_key, 
+                        low_key
+                    )
                     
                     # Перепроверяем после блокировки
                     recheck_query = "SELECT MAX(version) FROM events WHERE stream_id = $1"
