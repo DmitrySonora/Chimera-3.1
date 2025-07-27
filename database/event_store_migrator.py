@@ -125,41 +125,41 @@ class EventStoreMigrator:
         events: List, 
         target: PostgresEventStore
     ) -> None:
-        """Мигрировать один поток событий батчами"""
+        """Мигрировать один поток событий атомарно"""
         self.logger.info(
             f"Migrating stream {stream_id} with {len(events)} events..."
         )
         
-        # Разбиваем на батчи
-        for i in range(0, len(events), EVENT_STORE_MIGRATION_BATCH):
-            batch = events[i:i + EVENT_STORE_MIGRATION_BATCH]
-            
-            try:
-                # Записываем батч
-                for event in batch:
+        try:
+            # Для атомарности миграции потока записываем все события
+            # в одной транзакции напрямую через private метод
+            if hasattr(target, '_write_stream_events'):
+                # Используем приватный метод для атомарной записи
+                await target._write_stream_events(stream_id, events)
+            else:
+                # Fallback на старый метод если приватный недоступен
+                for event in events:
                     await target.append_event(event)
-                
-                self._migration_stats['migrated_events'] += len(batch)
-                
-                # Логируем прогресс
-                progress = (
-                    self._migration_stats['migrated_events'] / 
-                    self._migration_stats['total_events'] * 100
-                )
-                self.logger.debug(
-                    f"Progress: {progress:.1f}% "
-                    f"({self._migration_stats['migrated_events']}/{self._migration_stats['total_events']})"
-                )
-                
-            except Exception as e:
-                self.logger.error(
-                    f"Failed to migrate batch for stream {stream_id}: {str(e)}"
-                )
-                self._migration_stats['failed_events'] += len(batch)
-                # Продолжаем с следующим батчем
-                continue
-        
-        self._migration_stats['migrated_streams'] += 1
+            
+            self._migration_stats['migrated_events'] += len(events)
+            self._migration_stats['migrated_streams'] += 1
+            
+            # Логируем прогресс
+            progress = (
+                self._migration_stats['migrated_events'] / 
+                self._migration_stats['total_events'] * 100
+            )
+            self.logger.debug(
+                f"Progress: {progress:.1f}% "
+                f"({self._migration_stats['migrated_events']}/{self._migration_stats['total_events']})"
+            )
+            
+        except Exception as e:
+            self.logger.error(
+                f"Failed to migrate stream {stream_id}: {str(e)}"
+            )
+            self._migration_stats['failed_events'] += len(events)
+            # При ошибке весь поток не мигрирован
     
     async def _verify_migration(
         self, 
